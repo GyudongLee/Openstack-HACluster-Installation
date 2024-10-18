@@ -1,0 +1,529 @@
+
+ceph를 GLANCE 백엔드 스토리지로 사용할때
+
+######### ceph1 ceph admin 설정 ##################
+
+$ceph osd pool create images 128  //128은 pg
+
+$ceph osd pool ls
+
+images
+
+  ceph osd pool application enable images rbd
+
+glance 키링 생성  (키링으로 서로 맞아야 통신함)
+$sudo ceph auth get-or-create client.glance mon 'allow r' osd 'allow class-read object_prefix rbd_children, allow rwx pool=images' -o /etc/ceph/ceph.client.images.keyring
+$ceph auth get client.glance
+$cat /etc/ceph/ceph.client.images.keyring
+$scp /etc/ceph/ceph.client.images.keyring root@controller:/etc/ceph/ 
+
+
+######### controller ceph glance 설정 ##################
+[ Controller Node에 ceph 관련 api가 필요 ] 
+// Ceph Repository 설치
+# yum install -y centos-release-ceph-reef
+// Ceph Client 설치
+# yum install -y python3-rbd ceph-common
+#chown glance. /etc/ceph/ceph.client.images.keyring
+#chmod 640 /etc/ceph/ceph.client.images.keyring
+
+아래 내용 추가
+
+#vi /etc/ceph/ceph.conf
+[client.glance]
+keyring = /etc/ceph/ceph.client.images.keyring
+
+(예시)
+[global]
+        fsid = 9d63a1e4-8c23-11ef-8220-0050568e01c1
+        mon_host = [v2:192.168.3.99:3300/0,v1:192.168.3.99:6789/0] [v2:192.168.3.101:3300/0,v1:192.168.3.101:6789/0] [v2:192.168.3.102:3300/0,v1:192.168.3.102:6789/0]
+[client.cinder]
+keyring = /etc/ceph/ceph.client.volumes.keyring
+
+
+#vi /etc/glance/glance-api.conf
+
+[glance_store]
+stores = file,http,rbd
+default_store = rbd
+rbd_store_chunk_size = 8
+rbd_store_pool = images
+rbd_store_user = glance
+rbd_store_ceph_conf = /etc/ceph/ceph.conf
+filesystem_store_datadir = /var/lib/glance/images/
+
+(예시)
+[DEFAULT]
+bind_host = 0.0.0.0
+
+[database]
+connection = mysql+pymysql://glance:!vbcjwps1!@ha-controller-api-vip/glance
+
+[keystone_authtoken]
+www_authenticate_uri  = http://ha-controller-api-vip:5000
+auth_url = http://ha-controller-api-vip:5000
+memcached_servers = ha-controller-api01:11211,ha-controller-api02:11211,ha-controller-api03:11211
+auth_type = password
+project_domain_name = Default
+user_domain_name = Default
+project_name = service
+username = glance
+password = '!vbcjwps1!'
+
+[paste_deploy]
+flavor = keystone
+
+[glance_store]
+stores = file,http,rbd
+default_store = rbd
+rbd_store_chunk_size = 8
+rbd_store_pool = images
+rbd_store_user = glance
+rbd_store_ceph_conf = /etc/ceph/ceph.conf
+filesystem_store_datadir = /var/lib/glance/images/
+ 
+
+#systemctl restart openstack-glance-api
+
+ 
+
+######### ceph glance 설정 확인 ##################
+
+#openstack image create "cirros2" --file cirros-0.5.1-x86_64-disk.img --disk-format qcow2 --container-format bare --public
+#openstack image list
+
+
+[ceph@ceph1 cluster]$ rbd -p images ls -l
+NAME                                         SIZE PARENT FMT PROT LOCK
+35245ade-6adb-49b2-8844-b5ef580f8bd7      12.1MiB          2
+35245ade-6adb-49b2-8844-b5ef580f8bd7@snap 12.1MiB          2 yes
+[ceph@ceph1 cluster]$
+
+[ceph@ceph1 cluster]$ rbd info images/35245ade-6adb-49b2-8844-b5ef580f8bd7
+rbd image '35245ade-6adb-49b2-8844-b5ef580f8bd7':
+        size 12.1MiB in 2 objects
+        order 23 (8MiB objects)
+        block_name_prefix: rbd_data.1024312dceaf
+        format: 2
+        features: layering, exclusive-lock, object-map, fast-diff, deep-flatten
+        flags:
+        create_timestamp: Wed Feb 17 11:32:47 2021
+
+ 
+
+<<<<<<<<<<<<<<<ceph를 Cinder 백엔드 스토리지로 사용할때>>>>>>>>>>>>>>>>>>>
+
+######### ceph1 ceph admin 설정 ##################
+
+$ ceph osd pool create volumes 128
+
+$ceph osd pool ls
+
+images
+
+volumes
+# ceph osd pool application enable volumes rbd
+
+$sudo ceph auth get-or-create client.cinder mon 'allow r' osd 'allow class-read object_prefix rbd_children, allow rwx pool=volumes, allow rx pool=images' -o /etc/ceph/ceph.client.volumes.keyring
+
+$ceph auth get client.cinder
+
+$cat /etc/ceph/ceph.client.volumes.keyring
+
+$scp /etc/ceph/ceph.client.volumes.keyring root@$CinderVolumeService가 존재하는 곳:/etc/ceph/
+
+
+######### ceph cinder 설정($CinderVolumeService) ##################
+#chown cinder. /etc/ceph/ceph.client.volumes.keyring
+#chmod 640 /etc/ceph/ceph.client.volumes.keyring
+
+아래 내용 추가
+
+#vi /etc/ceph/ceph.conf
+[client.cinder]
+keyring = /etc/ceph/ceph.client.volumes.keyring
+
+(예시)
+[root@ceph1-mgmt log]# cat /etc/ceph/ceph.conf
+# minimal ceph.conf for 9d63a1e4-8c23-11ef-8220-0050568e01c1
+[global]
+        fsid = 9d63a1e4-8c23-11ef-8220-0050568e01c1
+        mon_host = [v2:192.168.3.99:3300/0,v1:192.168.3.99:6789/0] [v2:192.168.3.101:3300/0,v1:192.168.3.101:6789/0] [v2:192.168.3.102:3300/0,v1:192.168.3.102:6789/0]
+[client.cinder]
+keyring = /etc/ceph/ceph.client.volumes.keyring
+
+
+#uuidgen
+csjkdlf-dsj0231y380-32510
+ 
+
+#vi /etc/cinder/cinder.conf
+
+enabled_backends = lvm,ceph
+glance_api_version = 2
+
+[ceph]
+volume_driver = cinder.volume.drivers.rbd.RBDDriver
+rbd_cluster_name = ceph
+rbd_pool = volumes
+rbd_user = cinder
+rbd_ceph_conf = /etc/ceph/ceph.conf
+rbd_flatten_volume_from_snapshot = false
+rbd_secret_uuid = csjkdlf-dsj0231y380-32510
+rbd_max_clone_depth = 5
+rbd_store_chunk_size = 4
+rados_connect_timeout = -1
+
+
+(예시) 
+[database]
+connection = mysql+pymysql://cinder:!vbcjwps1!@ha-controller-api-vip/cinder
+
+[DEFAULT]
+transport_url = rabbit://openstack:!vbcjwps1!@ha-controller-api-vip
+auth_strategy = keystone
+state_path = /var/lib/cinder
+my_ip = 172.16.233.99
+enabled_backends = ceph
+enable_v3_api = true
+glance_api_servers = http://ha-controller-api-vip:9292
+glance_api_version = 2
+
+[keystone_authtoken]
+www_authenticate_uri = http://ha-controller-api-vip:5000
+auth_url = http://ha-controller-api-vip:5000
+memcached_servers = ha-controller-api01:11211,ha-controller-api02:11211,ha-controller-api03:11211
+auth_type = password
+project_domain_name = default
+user_domain_name = default
+project_name = service
+username = cinder
+password = '!vbcjwps1!'
+
+[ceph]
+volume_driver = cinder.volume.drivers.rbd.RBDDriver
+rbd_cluster_name = ceph
+rbd_pool = volumes
+rbd_user = cinder
+rbd_ceph_conf = /etc/ceph/ceph.conf
+rbd_flatten_volume_from_snapshot = false
+rbd_secret_uuid = e54f9563-c25c-4919-9d00-46c670c1b841
+rbd_max_clone_depth = 5
+rbd_store_chunk_size = 4
+rados_connect_timeout = -1
+
+[oslo_concurrency]
+lock_path = /var/lib/cinder/tmp
+
+
+#systemctl restart openstack-cinder-volume
+
+#openstack volume service list
+
+######### controller ceph volume 설정 확인 ##################
+
+#openstack volume create --size 1 ceph-vol1
+
+볼륨확인
+
+#openstack volume list
+
+볼륨 id값 확인
+
+#rbd -p volumes ls
+
+volume-dsfsdjfl-2332325151
+
+상세확인
+
+#rbd -p volumes info volume-dsfsdjfl-2332325151
+
+ 
+
+용량 확인
+
+#ceph df
+
+ 
+
+ 
+
+<<<<<<<<<<<ceph를 Nova 백엔드 스토리지로 사용할때>>>>>>>>>>>
+
+######### ceph1 ceph admin 설정 ##################
+
+$ ceph osd pool create vms 128
+
+$ceph osd pool ls
+
+images
+
+volumes
+
+vms
+
+# ceph osd pool application enable vms rbd
+ 
+
+$sudo ceph auth get-or-create client.nova mon 'allow r' osd 'allow class-read object_prefix rbd_children, allow rwx pool=vms, allow rmx pool=volumes, allow rx pool=images' -o /etc/ceph/ceph.client.compute.keyring
+
+$ceph auth get client.nova
+
+$cat /etc/ceph/ceph.client.compute.keyring
+
+$scp /etc/ceph/ceph.client.compute.keyring root@$compute-service있는 노드:/etc/ceph/
+
+ 
+######### compute ceph nova 설정 ( Compute Node )##################
+
+#chown nova. /etc/ceph/ceph.client.compute.keyring
+
+#chmod 640 /etc/ceph/ceph.client.compute.keyring
+
+ 
+
+아래 추가
+
+#vi /etc/ceph/ceph.conf
+
+[client.nova]
+
+keyring = /etc/ceph/ceph.client.compute.keyring
+
+ 
+(예시)
+[root@ha-compute-mgmt01 ceph]# cat /etc/ceph/ceph.conf
+# minimal ceph.conf for 9d63a1e4-8c23-11ef-8220-0050568e01c1
+[global]
+        fsid = 9d63a1e4-8c23-11ef-8220-0050568e01c1
+        mon_host = [v2:192.168.3.99:3300/0,v1:192.168.3.99:6789/0] [v2:192.168.3.101:3300/0,v1:192.168.3.101:6789/0] [v2:192.168.3.102:3300/0,v1:192.168.3.102:6789/0]
+[client.cinder]
+keyring = /etc/ceph/ceph.client.volumes.keyring
+
+[client.nova]
+keyring = /etc/ceph/ceph.client.compute.keyring
+
+
+#uuidgen
+
+401347031gt103470
+
+ 
+
+#vi /etc/nova/nova.conf
+
+[libvirt]
+
+images_type = rbd
+
+images_rbd_pool = vms
+
+images_rbd_ceph_conf = /etc/ceph/ceph.conf
+
+rbd_user = nova
+
+rbd_secret_uuid = 401347031gt103470
+
+ 
+
+(예시)
+[DEFAULT]
+compute_driver = libvirt.LibvirtDriver
+enabled_apis = osapi_compute,metadata
+transport_url = rabbit://openstack:!vbcjwps1!@ha-controller-api-vip:5672/
+my_ip = 172.16.233.106
+instance_usage_audit = True
+instance_usage_audit_period = hour
+vif_plugging_is_fatal = True
+vif_plugging_timeout = 300
+instances_path = /var/lib/nova/instances
+# 로그 경로 설정
+log_dir = /var/log/nova
+# 로그 수준 설정 (INFO 또는 DEBUG로 설정 가능)
+debug = False
+# 추가적으로 stderr 로 로그 출력 여부 설정
+use_stderr = False
+[api]
+auth_strategy = keystone
+
+[keystone_authtoken]
+www_authenticate_uri = http://ha-controller-api-vip:5000/
+auth_url = http://ha-controller-api-vip:5000/
+memcached_servers = ha-controller-api01:11211,ha-controller-api02:11211,ha-controller-api03:11211
+auth_type = password
+project_domain_name = Default
+user_domain_name = Default
+project_name = service
+username = nova
+password = '!vbcjwps1!'
+
+[service_user]
+send_service_user_token = true
+auth_url = http://ha-controller-api-vip:5000/identity
+auth_strategy = keystone
+auth_type = password
+project_domain_name = Default
+project_name = service
+user_domain_name = Default
+username = nova
+password = '!vbcjwps1!'
+
+[neutron]
+auth_url = http://ha-controller-api-vip:5000
+auth_type = password
+project_domain_name = default
+user_domain_name = default
+region_name = FGCP
+project_name = service
+username = neutron
+password = '!vbcjwps1!'
+service_metadata_proxy = true
+metadata_proxy_shared_secret = '!vbcjwps1!'
+
+[vnc]
+enabled = true
+server_listen = 0.0.0.0
+server_proxyclient_address = $my_ip
+novncproxy_base_url = http://ha-controller-api01:6080/vnc_auto.html
+
+[glance]
+api_servers = http://ha-controller-api-vip:9292
+
+[oslo_concurrency]
+lock_path = /var/lib/nova/tmp
+
+[placement]
+region_name = FGCP
+project_domain_name = Default
+project_name = service
+auth_type = password
+user_domain_name = Default
+auth_url = http://ha-controller-api-vip:5000/v3
+username = placement
+password = '!vbcjwps1!'
+
+[cinder]
+os_region_name = FGCP
+
+
+[notifications]
+notify_on_state_change = vm_and_task_state
+
+[oslo_messaging_notifications]
+driver = messagingv2
+
+[libvirt]
+virt_type = qemu
+images_type = rbd
+images_rbd_pool = vms
+images_rbd_ceph_conf = /etc/ceph/ceph.conf
+rbd_user = nova
+rbd_secret_uuid = c5ecf0eb-77af-4542-9247-a738de5d91b0
+
+#systemctl restart openstack-nova-compute
+#openstack compute service list
+
+
+######### ceph1 비밀키 설정 ##################
+
+ceph1 에서 ( root로 보낸다 )
+
+$ceph auth get-key client.cinder | ssh root@compute "tee client.cinder.key"
+
+$ceph auth get-key client.nova | ssh root@compute "tee client.nova.key"
+
+ 
+
+######### compute 비밀키 설정 ##################
+
+root로 넘어온 파일들을 옮긴다. 
+[root@ha-compute-mgmt01 ceph]# ll
+total 20
+-rw-r----- 1 nova nova  62 Oct 18 16:33 ceph.client.compute.keyring
+-rw-r--r-- 1 root root 402 Oct 18 16:34 ceph.conf
+-rw-r--r-- 1 root root  40 Oct 18 16:36 client.cinder.key
+-rw-r--r-- 1 root root  40 Oct 18 16:36 client.nova.key
+-rw-r--r-- 1 root root  92 Sep 24 02:01 rbdmap
+[root@ha-compute-mgmt01 ceph]#
+
+
+cinder의 uuid ( 아까 Cinder.conf에 넣었던 uuid )
+#vi ceph.xml\
+<secret ephemeral="no" private="no">
+<uuid>csjkdlf-dsj0231y380-32510</uuid>
+<usage type="ceph">
+<name>client.cinder secret</name>
+</usage>
+</secret>
+
+#virsh secret-define --file ceph.xml
+#virsh secret-set-value --secret csjkdlf-dsj0231y380-32510 --base64 $(cat client.cinder.key)
+#virsh secret-list
+
+###지운다###
+# rm -rf client.cinderkey ceph.xml
+
+ 
+nova의 uuid (아까 Nova.conf에 넣었던 내용 )
+#vi ceph2.xml
+<secret ephemeral="no" private="no">
+<uuid>401347031gt103470</uuid>
+<usage type="ceph">
+<name>client.nova secret</name>
+</usage>
+</secret>
+
+#virsh secret-define --file ceph2.xml
+#virsh secret-set-value --secret 401347031gt103470 --base64 $(cat client.nova.key)
+#virsh secret-list
+#rm -rf client.cinderkey ceph2.xml
+
+ 
+
+######### controller ceph 확인 ##################
+#openstack server list
+#openstack network list
+#openstack image list
+#openstack server create --flavor m1.tiny --image cirros2 --security-group provider --nic net-id=1315~~2519 cirros2
+#openstack server list
+#openstack floating ip create ext_net
+#openstack server add floating ip cirros2 x.x.200.202
+#openstack floating ip show x.x.113.202
+#openstack volume list
+#openstack server add volume cirros2 ceph-vol1
+#openstack volume list
+
+[root@compute ~]# rbd -p vms ls -l
+NAME                                      SIZE PARENT FMT PROT LOCK
+f4ef944f-aa3d-4665-a50f-e65a16676bd1_disk 1GiB          2      excl
+[root@compute ~]#
+
+[root@compute ~]# rbd -p vms info f4ef944f-aa3d-4665-a50f-e65a16676bd1_disk
+rbd image 'f4ef944f-aa3d-4665-a50f-e65a16676bd1_disk':
+        size 1GiB in 256 objects
+        order 22 (4MiB objects)
+        block_name_prefix: rbd_data.131f6b8b4567
+        format: 2
+        features: layering, exclusive-lock, object-map, fast-diff, deep-flatten
+        flags:
+        create_timestamp: Wed Feb 17 14:30:18 2021
+[root@compute ~]#
+
+[root@compute ~]# ceph df
+GLOBAL:
+    SIZE        AVAIL       RAW USED     %RAW USED
+    30.0GiB     26.8GiB      3.17GiB         10.57
+POOLS:
+    NAME        ID     USED        %USED     MAX AVAIL     OBJECTS
+    images      1      12.1MiB      0.09       12.6GiB           8
+    volumes     2         133B         0       12.6GiB           5
+    vms         3       196MiB      1.49       12.6GiB         138
+[root@compute ~]#
+
+[root@network neutron]# ls /var/lib/ceph/osd/ceph-2/
+
+activate.monmap  bluefs     fsid     kv_backend  mkfs_done  ready                type
+
+block            ceph_fsid  keyring  magic       osd_key    require_osd_release  whoami
+
+[root@network neutron]#
